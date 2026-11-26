@@ -21,7 +21,7 @@ import ipaddress
 import socket
 from urllib.parse import urlsplit
 
-from vendor.web_to_markdown_mcp._ssrf import (  # noqa: F401  (re-exported)
+from .vendor.web_to_markdown_mcp._ssrf import (  # noqa: F401  (re-exported)
     SSRFError,
     assert_url_allowed as _upstream_assert,
 )

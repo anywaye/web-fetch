@@ -57,7 +57,8 @@ async def _lifespan(_server: FastMCP):
 
 
 mcp: FastMCP = FastMCP(
-    "render-fetch",
+    "web-fetch",
+    version=config.VERSION,
     instructions=(
         "Reads web pages that ordinary fetching cannot: JS-rendered SPAs, "
         "soft bot walls, and sites that block on TLS fingerprint. Use "

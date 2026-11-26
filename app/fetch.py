@@ -50,6 +50,29 @@ def _extract(html: str, url: str) -> str | None:
     )
 
 
+def _metadata(html: str, url: str) -> dict:
+    """Best-effort metadata extraction from HTML via trafilatura."""
+    try:
+        m = trafilatura.metadata.extract_metadata(html, default_url=url)
+        return {
+            "title": getattr(m, "title", None),
+            "description": getattr(m, "description", None),
+            "language": getattr(m, "language", None),
+        }
+    except Exception:
+        return {}
+
+
+def _md_title(md: str | None) -> str | None:
+    """Title from a native-markdown body's first H1."""
+    if not md:
+        return None
+    for line in md.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
+
+
 def _scope_to_selector(html: str, selector: str | None) -> str:
     """Reduce the document to the subtree matching `selector` (D12).
 
@@ -118,7 +141,22 @@ async def _tier_1_2(
 
     # Tier 1: the server negotiated Markdown for us.
     if ctype in ("text/markdown", "text/x-markdown"):
-        return 1, r.text, final_url, r.status_code
+        return 1, r.text, final_url, r.status_code, {"title": _md_title(r.text)}
+
+    if ctype == "application/pdf":
+        try:
+            from io import BytesIO
+
+            from pypdf import PdfReader
+
+            reader = PdfReader(BytesIO(r.content))
+            pages = [p.extract_text() or "" for p in reader.pages]
+            md = "\n\n".join(pages).strip()
+            if md:
+                return 2, md, final_url, r.status_code, {"title": None}
+        except Exception as exc:
+            logger.debug("pdf extraction failed for %s: %s", url, exc)
+        return None
 
     if ctype and not (ctype.startswith("text/") or ctype in ("application/xhtml+xml", "application/xml")):
         logger.debug("tiers 1-2 skipping non-text content-type %r for %s", ctype, url)
@@ -127,7 +165,7 @@ async def _tier_1_2(
     # Tier 2: extract from the HTML we already have.
     md = _extract(_scope_to_selector(r.text, selector), final_url)
     if md and not _looks_like_js_shell(md, r.text):
-        return 2, md, final_url, r.status_code
+        return 2, md, final_url, r.status_code, _metadata(r.text, final_url)
     return None
 
 
@@ -146,7 +184,7 @@ async def _tier_25(
         return None
     md = _extract(_scope_to_selector(body, selector), final_url)
     if md and not _looks_like_js_shell(md, body):
-        return 2.5, md, final_url, status
+        return 2.5, md, final_url, status, _metadata(body, final_url)
     return None
 
 
@@ -205,9 +243,14 @@ async def _tier_3(
         status = response.status if response is not None else 0
         md = await _poll_tier3(page, url, selector, poll_budget_ms)
         final_url = page.url
+        try:
+            html = await page.content()
+            meta = _metadata(html, final_url)
+        except Exception:
+            meta = {}
     if not md:
         return None
-    return 3, md, final_url, status
+    return 3, md, final_url, status, meta
 
 
 # --- orchestration ----------------------------------------------------------
@@ -242,7 +285,7 @@ async def fetch_markdown(
     except SSRFError as exc:
         return envelope.error_envelope(f"refused to fetch {url}: {exc}", url=url)
 
-    best: tuple[float, str, str, int] | None = None
+    best: tuple[float, str, str, int, dict] | None = None
     cheap_budget = config.CHEAP_TIER_BUDGET_MS / 1000.0
 
     def usable(candidate: tuple[float, str, str, int] | None) -> bool:
@@ -369,7 +412,7 @@ async def fetch_markdown(
         )
         return env.to_dict()
 
-    tier, raw_md, final_url, status = best
+    tier, raw_md, final_url, status, meta = best
     full = envelope.tidy(raw_md)
     content_ok, hint = envelope.classify(full, tier_used=tier)
     window, truncated, next_offset = envelope.apply_offset_and_truncate(full, offset, max_chars)
@@ -380,6 +423,9 @@ async def fetch_markdown(
         identity_mode=mode,
         final_url=final_url,
         http_status=status,
+        title=(meta or {}).get("title"),
+        description=(meta or {}).get("description"),
+        language=(meta or {}).get("language"),
         content_ok=content_ok,
         truncated=truncated,
         next_offset=next_offset,

@@ -1,4 +1,4 @@
-# Render Fetch MCP
+# web-fetch
 
 MCP server for retrieving bot-unfriendly page content.
 

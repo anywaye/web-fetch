@@ -99,6 +99,22 @@ SHORT_HINT = (
     "the content is an image of text."
 )
 
+PARKED_HINT = (
+    "This page is a registrar parking page (a domain-for-sale ad), not the "
+    "site's content. Do not store it as the page's content."
+)
+
+_PARKED_MARKERS = (
+    'ap:"parking"',
+    "parking-lander",
+    'LANDER_SYSTEM="PW"',
+    "utm_campaign=nc_market",
+    "utm_source=parkingpage",
+    "is parked free, courtesy of GoDaddy",
+    "is available on GoDaddy Auctions",
+    "is registered at Namecheap",
+)
+
 
 def _hits(haystack: str, needles: tuple[str, ...]) -> int:
     return sum(1 for n in needles if n in haystack)
@@ -116,6 +132,9 @@ def classify(content: str | None, *, tier_used: float | None = None) -> tuple[bo
 
     text = content.lower()
     length = len(content.strip())
+
+    if any(m.lower() in text for m in _PARKED_MARKERS):
+        return False, PARKED_HINT
 
     bot_hits = _hits(text, _BOT_WALL_MARKERS)
     login_hits = _hits(text, _LOGIN_WALL_MARKERS)
@@ -169,6 +188,9 @@ class FetchEnvelope:
     identity_mode: str = "stealth"
     final_url: str | None = None
     http_status: int | None = None
+    title: str | None = None
+    description: str | None = None
+    language: str | None = None
     content_ok: bool = True
     truncated: bool = False
     next_offset: int | None = None
